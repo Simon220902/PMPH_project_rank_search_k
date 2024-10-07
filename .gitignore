@@ -1,0 +1,4 @@
+*.c
+naive_rank_search_k
+/lib/*
+/data/*
