@@ -34,7 +34,59 @@ let partition2 [n] 't                               -- Assume t=i32,n=6
 -- Flattening:
 -- Swapping parallel map2 ("loop") inside:
 -- -- loop ( map2 (3xfilter)) (BATCHED)
--- We can switch 
+
+entry nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
+    let p = A[(length A) - 1]
+    let running = true in
+    let (_, p, _, _) =
+        loop (k, p, A, running) = (k, p, A, running)
+        while running do
+            let A_lth_p = filter (<  p) A
+            let A_eqt_p = filter (== p) A
+            let A_gth_p = filter (>  p) A in
+            if (k <= (length A_lth_p))
+            then (k, A_lth_p[(length A_lth_p) -1], A_lth_p, true)
+            else if (k <= (length A_lth_p) + (length A_eqt_p))
+            then (k, p, A, false)
+            else ((k - (length A_lth_p) - (length A_eqt_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
+    in p
+
+let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
+
+-- Now we want to switch the loop and map2.
+-- This means that we do one iteration for each of the arrays. The condition now is whether there is a running variable that is true (i.e. reduce (or) false array_of_running).
+-- Since the outer loop is now doing it for all the different arrays in the batch we need to expand the tuple being updated in the while loop.
+-- 
+let oneStepRankSearch (k: i64, p:f32, A: []f32, running: bool) : (i64, f32, []f32, bool) =
+    if running then
+        let A_lth_p = filter (<  p) A
+        let A_eqt_p = filter (== p) A
+        let A_gth_p = filter (>  p) A in
+        if (k <= (length A_lth_p))
+        then (k, A_lth_p[(length A_lth_p) -1], A_lth_p, true)
+        else if (k <= (length A_lth_p) + (length A_eqt_p))
+        then (k, p, A, false)
+        else ((k - (length A_lth_p) - (length A_eqt_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
+    else (k, p, A, running)
+
+let batchNestedRankSearch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
+    let ps = map (\ A -> A[(length A)-1]) As
+    let runnings = replicate true m
+
+    let (_, ps, _, _) =
+        loop (ks, ps, As, runnings) = (ks, ps, As, runnings)
+        while (reduce (or) false runnings) do
+            zip4 ks ps As runnings
+            |> map oneStepRankSearch
+            |> unzip4
+    
+    
+
+--                                                         MAYBE NOT?
+let nestedLooprankSearchBatch (ks: [m]i32) (shp: [m]i32) (II1: *[n]i32) (A: [n]f32) : *[m]f32 =
+
+  
+
 -- Questions for Cosmin:
 -- -- We have written a version using the loop as you described instead of the tail-recursion,
    -- though we can not really figure out how we should think of this in terms of flattening.
