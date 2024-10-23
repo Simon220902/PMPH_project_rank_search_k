@@ -92,3 +92,60 @@ let nestedLooprankSearchBatch (ks: [m]i32) (shp: [m]i32) (II1: *[n]i32) (A: [n]f
    -- though we can not really figure out how we should think of this in terms of flattening.
    -- The loop introduces a "necessarily" sequential number of steps. Is it just the loop-swapping? since map2 is parallel?
 
+
+
+
+
+
+-- Human reasoning flattening:
+let rankSearch (k: i64) (A: []f32) : f32 =
+    let p = random_element A  -- This is part of what ensures expected O(n) given random distribution of data. Though we change this to length - 1 since it is easier to express.
+    let p = (length A) - 1
+    let A_lth_p = filter (< p) A
+    let A_eqt_p = filter (==p) A
+    let A_gth_p = filter (> p) A in
+    if (k <= A_lth_p.length)
+        then rankSearch k A_lth_p
+    else if (k <= A_lth_p.length + A_eqt_p.length)
+        then p
+    else rankSearch (k - A_lth_p.length - A_eqt_p.length) A_gth_p
+let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
+
+-- We want to remove the tail recursion by using a while loop.
+-- Instead of filtering at once we can split the filter up into 3 reduces and a single filter depending on which one we want to keep.
+entry nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
+    let (_, _, result) =
+        loop (k, A, result) = (k, A, -INFINITY)
+        while length A > 0 do
+            let p = A[(length A) - 1]
+            -- let A_lth_p = filter (<  p) A
+            let cnt_A_lth_p = reduce (+) 0 (map (\ e if e < p then 1 else 0))
+            -- let A_eqt_p = filter (== p) A
+            let cnt_A_eqt_p = reduce (+) 0 (map (\ e if e == p then 1 else 0))
+            -- let A_gth_p = filter (>  p) A
+            let cnt_A_gth_p = reduce (+) 0 (map (\ e if e > p then 1 else 0))
+
+            in
+            
+            if (k <= cnt_A_lth_p)
+            then (k, (filter (< p) A), result) -- Kind = 0
+            else if (k <= cnt_A_lth_p + cnt_A_eqt_p)
+            then (k, [], p) -- Kind = 1
+            else ((k - cnt_A_lth_p - cnt_A_eqt_p), (filter (> p) A), result) -- Kind = 2
+    in result
+
+let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
+
+-- To do the loop interchange first rewrite the map2 as a loop?
+let nestedBatchedLoopRankSearch (ks: [m]i64) (As: [m][]f32) : [m]f32 =
+    -- The map
+    let results = replicate -INFINITY m
+    let (_, results) =
+        loop (i, results) = (0, results)
+        while (i < m) do
+        let result = nestedLoopRankSearch ks[i] As[i]
+        in (i+1, (scatter results [i] [result]))
+    in results
+
+-- Now we need to do loop distribution???? Or should we just have distributed the map doing array expansion?
+-- But which arrays is it that need to be expanded?
