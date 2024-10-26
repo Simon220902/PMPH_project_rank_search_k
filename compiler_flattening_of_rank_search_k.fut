@@ -20,13 +20,13 @@ let partition2 [n] 't                               -- Assume t=i32,n=6
 --     let p = random_element A
 --     let p = (length A) - 1
 --     let A_lth_p = filter (< p) A
---     let A_eqt_p = filter (==p) A
+--     let A_eq_p = filter (==p) A
 --     let A_gth_p = filter (> p) A
 --     if (k <= A_lth_p.length)
 --         then rankSearch k A_lth_p
---     else if (k <= A_lth_p.length + A_eqt_p.length)
+--     else if (k <= A_lth_p.length + A_eq_p.length)
 --         then p
---     else rankSearch (k - A_lth_p.length - A_eqt_p.length) A_gth_p
+--     else rankSearch (k - A_lth_p.length - A_eq_p.length) A_gth_p
 -- let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
 
 -- What type of nested parallelism do we have here?
@@ -42,13 +42,13 @@ entry nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
         loop (k, p, A, running) = (k, p, A, running)
         while running do
             let A_lth_p = filter (<  p) A
-            let A_eqt_p = filter (== p) A
+            let A_eq_p = filter (== p) A
             let A_gth_p = filter (>  p) A in
             if (k <= (length A_lth_p))
             then (k, A_lth_p[(length A_lth_p) -1], A_lth_p, true)
-            else if (k <= (length A_lth_p) + (length A_eqt_p))
+            else if (k <= (length A_lth_p) + (length A_eq_p))
             then (k, p, A, false)
-            else ((k - (length A_lth_p) - (length A_eqt_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
+            else ((k - (length A_lth_p) - (length A_eq_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
     in p
 
 let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
@@ -60,13 +60,13 @@ let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
 let oneStepRankSearch (k: i64, p:f32, A: []f32, running: bool) : (i64, f32, []f32, bool) =
     if running then
         let A_lth_p = filter (<  p) A
-        let A_eqt_p = filter (== p) A
+        let A_eq_p = filter (== p) A
         let A_gth_p = filter (>  p) A in
         if (k <= (length A_lth_p))
         then (k, A_lth_p[(length A_lth_p) -1], A_lth_p, true)
-        else if (k <= (length A_lth_p) + (length A_eqt_p))
+        else if (k <= (length A_lth_p) + (length A_eq_p))
         then (k, p, A, false)
-        else ((k - (length A_lth_p) - (length A_eqt_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
+        else ((k - (length A_lth_p) - (length A_eq_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
     else (k, p, A, running)
 
 let batchNestedRankSearch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
@@ -102,50 +102,158 @@ let rankSearch (k: i64) (A: []f32) : f32 =
     let p = random_element A  -- This is part of what ensures expected O(n) given random distribution of data. Though we change this to length - 1 since it is easier to express.
     let p = (length A) - 1
     let A_lth_p = filter (< p) A
-    let A_eqt_p = filter (==p) A
+    let A_eq_p = filter (==p) A
     let A_gth_p = filter (> p) A in
     if (k <= A_lth_p.length)
         then rankSearch k A_lth_p
-    else if (k <= A_lth_p.length + A_eqt_p.length)
+    else if (k <= A_lth_p.length + A_eq_p.length)
         then p
-    else rankSearch (k - A_lth_p.length - A_eqt_p.length) A_gth_p
+    else rankSearch (k - A_lth_p.length - A_eq_p.length) A_gth_p
 let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
 
 -- We want to remove the tail recursion by using a while loop.
 -- Instead of filtering at once we can split the filter up into 3 reduces and a single filter depending on which one we want to keep.
-entry nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
+let nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
     let (_, _, result) =
-        loop (k, A, result) = (k, A, -INFINITY)
+        loop (k, A, result) = (k, A, NAN)
         while length A > 0 do
             let p = A[(length A) - 1]
             -- let A_lth_p = filter (<  p) A
-            let cnt_A_lth_p = reduce (+) 0 (map (\ e if e < p then 1 else 0))
-            -- let A_eqt_p = filter (== p) A
-            let cnt_A_eqt_p = reduce (+) 0 (map (\ e if e == p then 1 else 0))
+            let cnt_A_lth_p = reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A
+            -- let A_eq_p = filter (== p) A
+            let cnt_A_eq_p = reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A
             -- let A_gth_p = filter (>  p) A
-            let cnt_A_gth_p = reduce (+) 0 (map (\ e if e > p then 1 else 0))
+            -- let cnt_A_gth_p = reduce (+) 0 (map (\ e if e > p then 1 else 0))
 
             in
             
             if (k <= cnt_A_lth_p)
             then (k, (filter (< p) A), result) -- Kind = 0
-            else if (k <= cnt_A_lth_p + cnt_A_eqt_p)
+            else if (k <= cnt_A_lth_p + cnt_A_eq_p)
             then (k, [], p) -- Kind = 1
-            else ((k - cnt_A_lth_p - cnt_A_eqt_p), (filter (> p) A), result) -- Kind = 2
+            else ((k - cnt_A_lth_p - cnt_A_eq_p), (filter (> p) A), result) -- Kind = 2
     in result
 
 let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
 
--- To do the loop interchange first rewrite the map2 as a loop?
-let nestedBatchedLoopRankSearch (ks: [m]i64) (As: [m][]f32) : [m]f32 =
-    -- The map
-    let results = replicate -INFINITY m
-    let (_, results) =
-        loop (i, results) = (0, results)
-        while (i < m) do
-        let result = nestedLoopRankSearch ks[i] As[i]
-        in (i+1, (scatter results [i] [result]))
+-- We extract a single iteration of the loop as a separate function
+let nestedLoopRankSearchSingleIteration (k, A, result) =
+    let p = if length A > 0 then A[(length A) - 1] else NAN
+    let cnt_A_lth_p = reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A
+    let cnt_A_eq_p = reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A
+    in
+    if (k <= cnt_A_lth_p)
+    then (k, (filter (< p) A), result) -- Kind = 0
+    else if (k <= cnt_A_lth_p + cnt_A_eq_p)
+    then (k, [], p) -- Kind = 1
+    else ((k - cnt_A_lth_p - cnt_A_eq_p), (filter (> p) A), result) -- Kind = 2
+
+let nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
+    let (_, _, result) =
+        loop (k, A, result) = (k, A, NAN)
+        while length A > 0 do
+            nestedLoopRankSearchSingleIteration (k, A, result)
+    in result
+
+let main [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 = map2 rankSearch ks As
+
+-- Now we do the loop interchange (ASK COSMIN THIS BECAUSE WE ARE CHANGING THE CONDITION OF THE LOOP)
+let nestedLoopRankSearchBatch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
+    let (_, _, results) =
+        loop (ks, As, results) = (ks, As, (replicate m NAN))
+        while (reduce (+) 0 (map length As)) > 0 do
+            map nestedLoopRankSearchSingleIteration (zip3 ks As results)
+            |> unzip3
+    in result
+
+-- Before we can distribute the map over the single iteration we need to change it slightly. Introducing kind.
+let nestedLoopRankSearchSingleIteration (k, A, result) =
+    let p = if length A > 0 then A[(length A) - 1] else NAN
+    let cnt_A_lth_p = reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A
+    let cnt_A_eq_p = reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A
+
+    let kind = if length A > 0                       then -1 -- Was already done
+               else if k <= cnt_A_lth_p              then  0 -- Less than direction
+               else if k <= cnt_A_lth_p + cnt_A_eq_p then  1 -- Done
+               else                                        2 -- Greater than direction
+    let k' = if kind == 2 then (k - cnt_A_lth_p - cnt_A_eq_p) else k
+    let A' = filter (\ elem ->
+                        if      kind == 0 then elem < p -- Less than direction
+                        else if kind == 1 then false -- Done
+                        else                   elem > p -- Greater than direction
+                    ) A
+    let result' = if kind == 1 then p else result
+    in
+    (k', A', result')
+
+    -- if (k <= cnt_A_lth_p)
+    -- then (k, (filter (< p) A), result) -- Kind = 0
+    -- else if (k <= cnt_A_lth_p + cnt_A_eq_p)
+    -- then (k, [], p) -- Kind = 1
+    -- else ((k - cnt_A_lth_p - cnt_A_eq_p), (filter (> p) A), result) -- Kind = 2
+
+-- Distribute loop over nestedLoopRankSearchSingleIteration
+let nestedLoopRankSearchBatch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
+    let (_, _, results) =
+        loop (ks, As, results) = (ks, As, (replicate m NAN))
+        while (reduce (+) 0 (map length As)) > 0 do
+            let ps = map (\ A -> if length A > 0 then A[(length A) - 1] else NAN) As
+            let cnts_lth_p = map2 (\ A p -> reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A) As ps
+            let cnts_eq_p = map2 (\ A p -> reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A) As ps
+            let kinds = map4 (\ A k cnt_lth cnt_eq ->
+                                if length A > 0               then -1 -- Was already done
+                                else if k <= cnt_lth          then  0 -- Less than direction
+                                else if k <= cnt_lth + cnt_eq then  1 -- Done
+                                else                                2 -- Greater than direction
+                             ) As ks cnts_lth_p cnts_eq_p
+            let ks' = map4 (\ kind k cnt_lth cnt_eq -> if kind == 2 then (k - cnt_lth - cnt_eq) else k) kinds ks cnts_lth_p cnts_eq_p
+            let As' = map3 (\ A kind p -> filter(\ elem ->
+                                                    if      kind == 0 then elem < p -- Less than direction
+                                                    else if kind == 1 then false -- Done
+                                                    else                   elem > p -- Greater than direction
+                                                ) A) As kinds ps
+            let results' = map3 (\ result kind p -> if kind == 1 then p else result) results kinds ps
+            zip3 ks' As' results'
     in results
 
--- Now we need to do loop distribution???? Or should we just have distributed the map doing array expansion?
--- But which arrays is it that need to be expanded?
+-- We can extract the inner-map from cnts_lth_p and cnts_eq_p into two different.
+let nestedLoopRankSearchBatch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
+    let (_, _, results) =
+        loop (ks, As, results) = (ks, As, (replicate m NAN))
+        while (reduce (+) 0 (map length As)) > 0 do
+            -- FLAT
+            let ps = map (\ A -> if length A > 0 then A[(length A) - 1] else NAN) As
+            
+            -- NOT FLAT
+            -- WAS
+            -- let cnts_lth_p = map2 (\ A p -> reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A) As ps
+            -- let cnts_eq_p = map2 (\ A p -> reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A) As ps
+            -- BECAME
+            let ps_expanded = map2 (\ p A -> replicate (length A) p) ps As
+            let cnt_lth_per_elem = map2 (map2 (\p e -> if e < p then 1 else 0)) As ps_expanded
+            let cnt_eq_per_elem = map2 (map2 (\p e -> if e == p then 1 else 0)) As ps_expanded
+            let cnts_lth_p = map (reduce (+) 0) cnt_lth_per_elem
+            let cnts_eq_p = map (reduce (+) 0) cnt_eq_per_elem
+            
+            -- FLAT
+            let kinds = map4 (\ A k cnt_lth cnt_eq ->
+                                if length A > 0               then -1 -- Was already done
+                                else if k <= cnt_lth          then  0 -- Less than direction
+                                else if k <= cnt_lth + cnt_eq then  1 -- Done
+                                else                                2 -- Greater than direction
+                             ) As ks cnts_lth_p cnts_eq_p
+            
+            -- FLAT
+            let ks' = map4 (\ kind k cnt_lth cnt_eq -> if kind == 2 then (k - cnt_lth - cnt_eq) else k) kinds ks cnts_lth_p cnts_eq_p
+
+            -- NOT FLAT
+            let As' = map3 (\ A kind p -> filter(\ elem ->
+                                                    if      kind == 0 then elem < p -- Less than direction
+                                                    else if kind == 1 then false -- Done
+                                                    else                   elem > p -- Greater than direction
+                                                ) A ) As kinds ps
+            
+            --FLAT
+            let results' = map3 (\ result kind p -> if kind == 1 then p else result) results kinds ps
+            zip3 ks' As' results'
+    in results

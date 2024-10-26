@@ -19,6 +19,7 @@ entry radix_sort_based_rank_search_k (k: i32) (A: []f32) : f32 =
 -- entry: radixSortRankSearchBatch
 -- input {[4i32] [12i32] [1f32, 2f32, 3f32, 4f32, 5f32, 6f32, 7f32, 8f32, 9f32, 10f32, 11f32, 12f32]}
 -- output { [4f32] }
+
 entry radixSortRankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32) (A: [n]f32) : [m]f32 =
     let shp = map i64.i32 shp
     let start_indices = map (\ elem -> elem - shp[0]) (scan (+) 0 shp) in
@@ -86,11 +87,13 @@ entry rankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
             -- This is a large-parallel operation of size n.
             -- Hint: use a histogram or reduce_by_index construct.
             let ps_expanded = map (\i -> ps[i]) II1
-            let lth_per_elem = map2 (\ elem p -> if elem < p then 1 else 0) A ps_expanded
-            let eq_per_elem = map2 (\ elem p -> if elem == p then 1 else 0) A ps_expanded
+            --let lth_per_elem = map2 (\ elem p -> if elem < p then 1 else 0) A ps_expanded
+            --let eq_per_elem = map2 (\ elem p -> if elem == p then 1 else 0) A ps_expanded
+            let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (1,0) else if elem == p then (0,1) else (0,0))) A ps_expanded
             let II1' = map i64.i32 II1
-            let cnt_lth = reduce_by_index (replicate m (0)) (+) (0) II1' lth_per_elem
-            let cnt_eq = reduce_by_index (replicate m (0)) (+) (0) II1' eq_per_elem
+            --let cnt_lth = reduce_by_index (replicate m (0)) (+) (0) II1' lth_per_elem
+           -- let cnt_eq = reduce_by_index (replicate m (0)) (+) (0) II1' eq_per_elem
+           let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
 
             -- 3. Use a small-parallel operation of size m to compute:
             --     3.1 kinds → the kind of each subproblem, e.g.,
@@ -137,15 +140,17 @@ entry rankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
             -- 5. filter the A and II1 arrays to contain only the elements of
             --     interest of the subproblems that are still active.
             
-            let (_, _, A', II1') = zip4 lth_per_elem eq_per_elem A II1
-                            |> filter (\ (lth, eq, _, i) ->
+            -- let (_, _, A', II1') = zip4 lth_per_elem eq_per_elem A II1
+            let (_, A', II1') = zip3 lth_eq_per_elem A II1
+                            |> filter (\ ((lth, eq), _, i) ->
                                         let kind = kinds[i] in
                                         if kind == -1 then false
                                         else if kind == 0 then lth == 1
                                         else if kind == 1 then false
                                         else lth == 0 && eq == 0
                                 )
-                            |> unzip4
+                            |> unzip3
+                            -- -- |> unzip4
             in (ks', shp', II1', A', result')
     in result
 
@@ -170,3 +175,13 @@ entry testRankSearchBatch [m] [n] (A : [m][n]f32) : [m]f32 =
     let ks = replicate m (n_elem/2)
     in rankSearchBatch ks shp II1 A
 
+-- Radix Sort Version Test large inputs
+-- ==
+-- entry: testRadixSortRankSearchBatch
+-- random input { [10000][10000]f32 }
+entry testRadixSortRankSearchBatch [m] [n] (A : [m][n]f32) : [m]f32 =
+    let n_elem = i32.i64 n
+    let A = flatten A
+    let shp = replicate m n_elem
+    let ks = replicate m (n_elem/2)
+    in radixSortRankSearchBatch ks shp A
