@@ -1,4 +1,6 @@
+*
+!*.*
+!*/
+!*/Makefile
 *.c
-naive_rank_search_k
-/lib/*
-/data/*
+rank_search_k_futhark/data/*
