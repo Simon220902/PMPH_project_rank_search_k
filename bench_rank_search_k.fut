@@ -1,6 +1,5 @@
 import "rank_search_k"
 
-
 -- Bench Unoptimized
 -- ==
 -- entry: benchUnoptimized
@@ -23,6 +22,7 @@ entry benchUnoptimized [m] [n] (A : [m][n]f32) =
 -- random input { [1000000][100]f32 }
 -- random input { [10000][10000]f32 }
 -- random input { [1000][100000]f32}
+-- random input { [1000][400000]f32}
 entry benchOptimized [m] [n] (A : [m][n]f32) =
     let n_elem = i32.i64 n
     let A = flatten A
