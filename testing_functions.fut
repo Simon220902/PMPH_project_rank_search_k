@@ -120,13 +120,18 @@ let testnewpartition =
     in (partition3 (< p) (== p) arr) == (partition3old (< p) (== p) arr)
 
 
--- Compiler like flattening
 
-let batchNestedRankSearch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n]f32) : [m]f32 =
+
+-- Compiler like flattening
+-- ==
+-- entry: batchNestedRankSearch
+-- input {[4i64] [12i32] [1f32, 2f32, 3f32, 4f32, 5f32, 6f32, 7f32, 8f32, 9f32, 10f32, 11f32, 12f32]}
+-- output { [4f32] }
+entry batchNestedRankSearch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n]f32) : [m]f32 =
     let offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota m)) |> scan (+) 0
     let ps = map2 (\row_offset i -> As[row_offset+i]) offsets (map (\ size -> size - 1i32) shp) 
     let runnings = replicate m true
-    let (_, ps, _, _) =
+    let (_, ps, _, _, _) =
         loop (ks : [m]i64, ps : [m]f32, shp : [m]i32, As : []f32, runnings : [m]bool) = (ks, ps, shp, As, runnings)
         while (reduce (||) false runnings) do
             let n' = reduce (+) 0 shp |> i64.i32
@@ -212,72 +217,30 @@ let batchNestedRankSearch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n]f32) : [m
                                 then 0
                                 else cnt_gth
                             ) ks cnts_lth cnts_eq cnts_gth runnings
-            -- Flattened MAP (IF)
+            
             let As' =
-                let ks_expanded = expandi64 shp ks :> [n']i64
-                let ps_expanded = expandf32 shp ps :> [n']f32
-                let cnts_lth_expanded = expandi64 shp cnts_lth :> [n']i64
-                let cnts_eq_expanded = expandi64 shp cnts_eq :> [n']i64
-                let cnts_gth_expanded = expandi64 shp cnts_gth :> [n']i64
-                let runnings_expanded = expandbool shp runnings :> [n']bool
-                let zipped_data = zip4 ks_expanded ps_expanded (zip3 cnts_lth_expanded cnts_eq_expanded cnts_gth_expanded) runnings_expanded
+                let n' = (reduce (+) 0 shp')
+                let shp'_i64 = (map i32.i64 shp')
+                let old_offset_expanded = (expandi64 shp'_i64 (scanex (+) 0 (map i64.i32 shp)))
+                let old_offset_expanded = old_offset_expanded :> [n']i64
+                let new_offset_expanded = expandi64 shp'_i64 (scanex (+) 0 shp') :> [n']i64
+                let newis =  iota n'
+                let ks_expanded = expandi64 shp'_i64 ks :> [n']i64
+                let runnings_expanded = expandbool shp'_i64 runnings :> [n']bool
+                let cnt_lth_expanded = expandi64 shp'_i64 cnts_lth :> [n']i64
+                let cnt_eq_expanded = expandi64 shp'_i64 cnts_eq :> [n']i64
+                in
+                map4 (\ newi old_offset new_offset (k, running, cnt_lth, cnt_eq) ->
+                            let i = newi - new_offset in
+                            if k <= cnt_lth && running
+                            then
+                                let oldi = old_offset + i
+                                in As_partioned[oldi]
+                            else 
+                                let oldi = old_offset + i + cnt_lth + cnt_eq
+                                in As_partioned[oldi]
+                    ) newis old_offset_expanded new_offset_expanded (zip4 ks_expanded runnings_expanded cnt_lth_expanded cnt_eq_expanded)
 
-                let lth_pred (k, _, (cnt_lth, _, _), running) =
-                    k <= cnt_lth && running
-
-                let (is_lth, q_lth) = partition2 (\ i -> lth_pred zipped_data[i]) (iota n')
-                let is_lth = is_lth :> [q_lth + (n' - q_lth)]i64
-                let (is_then, is_else) = split is_lth
-                let zipped_data_then = map (\ i_then -> zipped_data[i_then]) is_then
-                let cnts_lth' = (map i32.i64 cnts_lth) :> [m]i32
-                let n_lth' = reduce (+) 0 cnts_lth
-                let res_then =
-                    let lth_iss =
-                        let flag = mkFlagArray cnts_lth' 0 (replicate m 1)
-                        let vals = map (\ f -> if f!=0 then 0 else 1) flag
-                        in sgmScanInc (+) 0 (map (==1) flag) vals :> [n_lth']i32
-                    in
-                    let row_offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota m)) |> scan (+) 0
-                    let row_offsets_expanded =
-                            let (flag_cnts_lth, flag_row_offsets) = zip cnts_lth row_offsets |> mkFlagArray cnts_lth' (0,0) |> unzip
-                            in sgmScanInc (+) 0 (map (!= 0) flag_cnts_lth) flag_row_offsets :> [n_lth']i32
-                    in map2 (\row_offset i -> zipped_data_then[row_offset+i]) row_offsets_expanded lth_iss
-                let zipped_data_else = map (\i_else -> zipped_data[i_else]) is_else
-                let res_else =
-                    let len = length zipped_data_else
-                    let eq_pred (k, _, (cnt_lth, cnt_eq, _), running) =
-                        k <= cnt_lth + cnt_eq || not running
-                    let (is_gth, q_gth) = partition2 (\ i -> eq_pred zipped_data_else[i]) (iota len)
-                    let is_gth = is_gth :> [q_gth + (n' - q_gth)]i64
-                    let (is_gth_then, is_gth_else) = split is_gth
-                    -- let zipped_data_else_then = map (\ i_gth_then -> zipped_data_else[i_gth_then]) is_gth_then -- This is just gonna map to an empty list in the end.
-                    let res_else_then = []
-                    let zipped_data_else_else = map (\ i_gth_else -> zipped_data_else[i_gth_else]) is_gth_else
-                    let cnts_gth' = (map i32.i64 cnts_gth) :> [m]i32
-                    let n_gth' = reduce (+) 0 cnts_gth
-                    let res_else_else =
-                        let gth_iss =
-                            let flag = mkFlagArray cnts_gth' 0 (replicate m 1) :> [n_gth']i32
-                            let vals = map (\ f -> if f!=0 then 0 else 1) flag
-                            let iotas = sgmScanInc (+) 0 (map (!=0) flag) vals
-                            let cnts_lth_eq_expanded =
-                                let cnts_lth_eq = map2 (+) cnts_lth cnts_eq
-                                let (flag_cnts_gth, flag_cnts_lth_eq) = zip cnts_gth cnts_lth_eq |> mkFlagArray cnts_gth' (0,0) |> unzip
-                                in sgmScanInc (+) 0 (map (!= 0) flag_cnts_gth) flag_cnts_lth_eq :> [n_gth']i64
-                            in map2 (+) iotas cnts_lth_eq_expanded
-                        in let row_offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota m)) |> scan (+) 0
-                        let row_offsets_expanded =
-                            let (flag_cnts_gth, flag_row_offsets) = zip cnts_gth row_offsets |> mkFlagArray cnts_gth' (0,0) |> unzip
-                            in sgmScanInc (+) 0 (map (!= 0) flag_cnts_gth) flag_row_offsets :> [n_gth']i32
-                        in map2 (\row_offset i -> zipped_data_else_else[row_offset+i]) row_offsets_expanded (map i32.i64 gth_iss)
-                    let res = scatter (replicate len 0) is_gth_then res_else_then
-                    in scatter res is_gth_else res_else_else
-                
-                let final_len = reduce (+) 0 shp' -- 
-                let res = scatter (replicate final_len 0) is_then res_then -- This should probably not be len? but the new len of the new shape?
-                in scatter res is_else res_else
-
-            in (ks', ps', shp', As', runnings')
+            in (ks', ps', (map i32.i64 shp'), As', runnings')
     in ps
 
-def main _ = 0

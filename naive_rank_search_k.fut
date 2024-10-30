@@ -64,19 +64,16 @@ entry nestedLoopRankSearch (k: i64) (A: []f32) : f32 =
 
 
 -- entry: rankSearchBatch
+
+
 -- input {[4i32] [12i32] [0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32] [1f32, 2f32, 3f32, 4f32, 5f32, 6f32, 7f32, 8f32, 9f32, 10f32, 11f32, 12f32]}
 -- output { [4f32] }
 
 entry rankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
                     (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+    -- Can't generalize optimized to type variable 't because: https://futhark-book.readthedocs.io/en/latest/language.html#parametric-polymorphism "Hence, the Futhark compiler will prevent us from using the + operator. In some languages, such as Haskell, facilities such as type classes may be used to support a notion of restricted polymorphism, where we can require that an instantiation of a type variable supports certain operations (like +)."
+    -- Also you can't overload a function: https://futhark.readthedocs.io/en/latest/language-reference.html "Overloaded operators cannot be defined by the user."
     let result = replicate m 0f32
-    -- let ks = map id ks
-    -- let shp = map id shp
-    -- let A = map id A
-
-    -- FOR BETTER PERFORMANCE:
-    -- We can treat the first iteration differently. By choosing the pivot as the average of that array.
-
     let (_,_,_,_,result) =
         loop (ks: [m]i32, shp: [m]i32, II1, A, result)
         while (length A > 0) do
@@ -155,17 +152,144 @@ entry rankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
     in result
 
 
+-- entry: rankSearchBatchOptimized
 
+-- input {[4i32] [12i32] [0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32] [1f32, 2f32, 3f32, 4f32, 5f32, 6f32, 7f32, 8f32, 9f32, 10f32, 11f32, 12f32]}
+-- output { [4f32] }
+entry rankSearchBatchOptimized [m] [n] (ks: [m]i32) (shp: [m]i32)
+                    (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+    let result = replicate m 0f32
+    let II1' = map i64.i32 II1
+    let i = 0
+    let (_,_,_,_,_,result) =
+        loop (i : i32, ks: [m]i32, shp: [m]i32, II1', A, result)
+        while (length A > 0) do
+            let ps = if i == 0 then
+                        map2 (\ sum len -> sum / len) (reduce_by_index (replicate m (0)) (+) (0) II1' A) (map f32.i32 shp)
+                    else map2 (\ i size -> if size > 0 then A[i-1] else 0) (scan (+) 0 shp) shp
+            let ps_expanded = map (\i -> ps[i]) II1'
+            let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded
+            let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
 
+            let kinds = map3 (\ k lth eq->
+                                if k == -1            then -1i8
+                                else if k <= lth      then 0i8
+                                else if k <= (lth+eq) then 1i8
+                                else                       2i8
+                            ) ks cnt_lth cnt_eq
+                            
+            let (shp', ks') = map5 (\ len k kind lth eq->
+                                        if      kind == -1i8 then (len, -1)
+                                        else if kind ==  0i8 then (lth, k)
+                                        else if kind ==  1i8 then (0, -1)
+                                        else (len - (lth + eq), k - (lth + eq))
+                                    ) shp ks kinds cnt_lth cnt_eq
+                              |> unzip
 
+            let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps) |> unzip3
+            let result' = scatter result is vs
+            
+            let (_, A', II1') = zip3 lth_eq_per_elem A II1'
+                            |> filter (\ ((lth, eq), _, i) ->
+                                        let kind = kinds[i] in
+                                        if kind == -1 then false
+                                        else if kind == 0 then lth == 1
+                                        else if kind == 1 then false
+                                        else lth == 0 && eq == 0
+                                )
+                            |> unzip3
+            in (i+1, ks', shp', II1', A', result')
+    in result
+
+-- entry: rankSearchBatchOptimizedFirstIterationOut
+
+-- input {[4i32] [12i32] [0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32, 0i32] [1f32, 2f32, 3f32, 4f32, 5f32, 6f32, 7f32, 8f32, 9f32, 10f32, 11f32, 12f32]}
+-- output { [4f32] }
+entry rankSearchBatchOptimizedFirstIterationOut [m] [n] (ks: [m]i32) (shp: [m]i32)
+                    (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+    let result = replicate m 0f32
+    let II1' = map i64.i32 II1
+    -- First iteration taken out of the loop
+    let ps_fst = map2 (\ sum len -> sum / len) (reduce_by_index (replicate m (0)) (+) (0) II1' A) (map f32.i32 shp)
+    let ps_expanded_fst = map (\i -> ps_fst[i]) II1'
+    let lth_eq_per_elem_fst = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded_fst
+    let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem_fst |> unzip
+    let kinds = map3 (\ k lth eq->
+                                if k == -1            then -1i8
+                                else if k <= lth      then 0i8
+                                else if k <= (lth+eq) then 1i8
+                                else                       2i8
+                            ) ks cnt_lth cnt_eq
+    
+    let (shp_fst, ks_fst) = map5 (\ len k kind lth eq->
+                                        if      kind == -1i8 then (len, -1)
+                                        else if kind ==  0i8 then (lth, k)
+                                        else if kind ==  1i8 then (0, -1)
+                                        else (len - (lth + eq), k - (lth + eq))
+                                    ) shp ks kinds cnt_lth cnt_eq
+                              |> unzip
+    
+    let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps_fst) |> unzip3
+    let result_fst = scatter result is vs
+    let (_, A_fst, II1_fst) = zip3 lth_eq_per_elem_fst A II1'
+                            |> filter (\ ((lth, eq), _, i) ->
+                                        let kind = kinds[i] in
+                                        if kind == -1 then false
+                                        else if kind == 0 then lth == 1
+                                        else if kind == 1 then false
+                                        else lth == 0 && eq == 0
+                                )
+                            |> unzip3
+    
+    let (_,_,_,_,result) =
+        loop (ks: [m]i32, shp: [m]i32, II1', A, result) = ((copy ks_fst), shp_fst, (copy II1_fst), A_fst,  result_fst)
+        while (length A > 0) do
+            let ps = map2 (\ i size -> if size > 0 then A[i-1] else 0) (scan (+) 0 shp) shp
+
+            let ps_expanded = map (\i -> ps[i]) II1'
+            let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded
+            -- Tried the below "optimization" of not generating a ps_expandend. It did not do a difference.
+            -- let lth_eq_per_elem = map2 (\ elem i -> (if elem < ps[i] then (1i32,0i32) else if elem == ps[i] then (0i32,1i32) else (0i32,0i32))) A II1'
+            let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
+            let kinds = map3 (\ k lth eq->
+                                if k == -1            then -1i8
+                                else if k <= lth      then 0i8
+                                else if k <= (lth+eq) then 1i8
+                                else                       2i8
+                            ) ks cnt_lth cnt_eq
+            let (shp', ks') = map5 (\ len k kind lth eq->
+                                        if      kind == -1i8 then (len, -1)
+                                        else if kind ==  0i8 then (lth, k)
+                                        else if kind ==  1i8 then (0, -1)
+                                        else (len - (lth + eq), k - (lth + eq))
+                                    ) shp ks kinds cnt_lth cnt_eq
+                              |> unzip
+            
+            let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps) |> unzip3
+            let result' = scatter result is vs
+
+            let (_, A', II1') = zip3 lth_eq_per_elem A II1'
+                            |> filter (\ ((lth, eq), _, i) ->
+                                        let kind = kinds[i] in
+                                        if kind == -1 || kind == 1 then false
+                                        else if kind == 0 then lth == 1
+                                        else lth == 0 && eq == 0
+                                )
+                            |> unzip3
+            in (ks', shp', II1', A', result')
+    in result
 
 -- N = 100000000 M = 10000 --> that our "n" should be N / M
-
+-- CUB VERSION RAN IN: 5904.29 us
 
 -- Human Reasoning Version Test large inputs
 -- ==
 -- entry: testRankSearchBatch
+
+-- random input { [10000][100]f32 }
+-- random input { [1000000][100]f32 }
 -- random input { [10000][10000]f32 }
+-- random input { [1000][100000]f32}
 entry testRankSearchBatch [m] [n] (A : [m][n]f32) : [m]f32 =
     -- let m_elem = i32.i64 m
     let n_elem = i32.i64 n
@@ -175,13 +299,103 @@ entry testRankSearchBatch [m] [n] (A : [m][n]f32) : [m]f32 =
     let ks = replicate m (n_elem/2)
     in rankSearchBatch ks shp II1 A
 
+-- Human Reasoning Version Optimized Test large inputs
+-- ==
+
+-- -- entry: testRankSearchBatchOptimized
+
+-- random input { [10000][100]f32 }
+-- random input { [1000000][100]f32 }
+-- random input { [10000][10000]f32 }
+-- random input { [1000][100000]f32}
+entry testRankSearchBatchOptimized [m] [n] (A : [m][n]f32) : [m]f32 =
+    -- let m_elem = i32.i64 m
+    let n_elem = i32.i64 n
+    let A = flatten A
+    let II1 = map (\i -> replicate n i) (iota m) |> flatten |> map i32.i64
+    let shp = replicate m n_elem
+    let ks = replicate m (n_elem/2)
+    in
+    rankSearchBatchOptimized ks shp II1 A
+
+-- Human Reasoning Version Optimized Test large inputs first iteration out
+-- ==
+
+-- entry: testRankSearchBatchOptimizedFstItOut
+
+-- random input { [10000][100]f32 }
+-- random input { [1000000][100]f32 }
+-- random input { [10000][10000]f32 }
+-- random input { [1000][100000]f32}
+entry testRankSearchBatchOptimizedFstItOut [m] [n] (A : [m][n]f32) : [m]f32 =
+    -- let m_elem = i32.i64 m
+    let n_elem = i32.i64 n
+    let A = flatten A
+    let II1 = map (\i -> replicate n i) (iota m) |> flatten |> map i32.i64
+    let shp = replicate m n_elem
+    let ks = replicate m (n_elem/2)
+    in
+    rankSearchBatchOptimizedFirstIterationOut ks shp II1 A
+
+
 -- Radix Sort Version Test large inputs
 -- ==
+
 -- entry: testRadixSortRankSearchBatch
+
+-- random input { [10000][100]f32 }
+-- random input { [1000000][100]f32 }
 -- random input { [10000][10000]f32 }
+-- random input { [1000][100000]f32}
 entry testRadixSortRankSearchBatch [m] [n] (A : [m][n]f32) : [m]f32 =
     let n_elem = i32.i64 n
     let A = flatten A
     let shp = replicate m n_elem
     let ks = replicate m (n_elem/2)
     in radixSortRankSearchBatch ks shp A
+
+-- Validation Unoptimized
+-- ==
+-- entry: validationUnoptimized
+-- random input { [10000][100]f32 }
+-- output { true }
+-- random input { [1000000][100]f32 }
+-- output { true }
+-- random input { [10000][10000]f32 }
+-- output { true }
+-- random input { [1000][100000]f32}
+-- output { true }
+entry validationUnoptimized [m] [n] (A : [m][n]f32) : bool =
+    let n_elem = i32.i64 n
+    let A = flatten A
+    let shp = replicate m n_elem
+    let ks = replicate m (n_elem/2)
+    let II1 = map (\i -> replicate n i) (iota m) |> flatten |> map i32.i64
+
+    let valid_res = radixSortRankSearchBatch ks shp A
+    let test_res  = rankSearchBatchOptimized ks shp II1 A
+
+    in reduce (&&) true (map2 (==) valid_res test_res)
+
+-- Validation Optimized
+-- ==
+-- entry: validationOptimized
+-- random input { [10000][100]f32 }
+-- output { true }
+-- random input { [1000000][100]f32 }
+-- output { true }
+-- random input { [10000][10000]f32 }
+-- output { true }
+-- random input { [1000][100000]f32}
+-- output { true }
+entry validationOptimized [m] [n] (A : [m][n]f32) : bool =
+    let n_elem = i32.i64 n
+    let A = flatten A
+    let shp = replicate m n_elem
+    let ks = replicate m (n_elem/2)
+    let II1 = map (\i -> replicate n i) (iota m) |> flatten |> map i32.i64
+
+    let valid_res = radixSortRankSearchBatch ks shp A
+    let test_res  = rankSearchBatchOptimizedFirstIterationOut ks shp II1 A
+
+    in reduce (&&) true (map2 (==) valid_res test_res)
