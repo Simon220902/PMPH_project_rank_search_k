@@ -4,9 +4,9 @@ import "rank_search_k"
 -- ==
 -- entry: benchUnoptimized
 -- random input { [10000][100]f32 }
--- random input { [1000000][100]f32 }
--- random input { [10000][10000]f32 }
--- random input { [1000][100000]f32}
+--- random input { [1000000][100]f32 }
+--- random input { [10000][10000]f32 }
+--- random input { [1000][100000]f32}
 entry benchUnoptimized [m] [n] (A : [m][n]f32) =
     let n_elem = i32.i64 n
     let A = flatten A
@@ -19,10 +19,10 @@ entry benchUnoptimized [m] [n] (A : [m][n]f32) =
 -- ==
 -- entry: benchOptimized
 -- random input { [10000][100]f32 }
--- random input { [1000000][100]f32 }
--- random input { [10000][10000]f32 }
--- random input { [1000][100000]f32}
--- random input { [1000][400000]f32}
+--- random input { [1000000][100]f32 }
+--- random input { [10000][10000]f32 }
+--- random input { [1000][100000]f32}
+--- random input { [1000][400000]f32}
 entry benchOptimized [m] [n] (A : [m][n]f32) =
     let n_elem = i32.i64 n
     let A = flatten A
@@ -36,9 +36,9 @@ entry benchOptimized [m] [n] (A : [m][n]f32) =
 -- ==
 -- entry: benchCompilerFlattened
 -- random input { [10000][100]f32 }
--- random input { [1000000][100]f32 }
--- random input { [10000][10000]f32 }
--- random input { [1000][100000]f32}
+--- random input { [1000000][100]f32 }
+--- random input { [10000][10000]f32 }
+--- random input { [1000][100000]f32}
 entry benchCompilerFlattened [m] [n] (A : [m][n]f32) =
     let n_elem = i32.i64 n
     let A = flatten A
