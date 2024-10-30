@@ -37,7 +37,6 @@ let expandi64 = expand (+) 0i64
 let expandf32 = expand (+) 0f32
 let expandbool = expand (||) false
 
-
 let partition2 [n] 't                               -- Assume t=i32,n=6
         (p : (t -> bool))                           -- p (x:i32) = 0 == (x%2),
         (arr : [n]t) : ([n]t, i64) =                -- arr = [5,4,2,3,7,8]
@@ -182,52 +181,47 @@ module RankSearchK = {
                 in (ks', shp', II1', A', result')
         in result
 
-    let flatRankSearchBatchOptimized [m] [n] (ks: [m]i32) (shp: [m]i32)
+    let flatRankSearchBatchOptimized [m] [n] (ps : [m]f32) (ks: [m]i32) (shp: [m]i32)
                                             (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+        -- -- First iteration taken out of the loop
+        -- let ps_fst = map2 (\ sum len -> sum / len) (reduce_by_index (replicate m (0)) (+) (0) II1' A) (map f32.i32 shp)
+        -- let ps_expanded_fst = map (\i -> ps_fst[i]) II1'
+        -- let lth_eq_per_elem_fst = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded_fst
+        -- let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem_fst |> unzip
+        -- let kinds = map3 (\ k lth eq->
+        --                             if k == -1            then -1i8
+        --                             else if k <= lth      then 0i8
+        --                             else if k <= (lth+eq) then 1i8
+        --                             else                       2i8
+        --                         ) ks cnt_lth cnt_eq
+        
+        -- let (shp_fst, ks_fst) = map5 (\ len k kind lth eq->
+        --                                     if      kind == -1i8 then (len, -1)
+        --                                     else if kind ==  0i8 then (lth, k)
+        --                                     else if kind ==  1i8 then (0, -1)
+        --                                     else (len - (lth + eq), k - (lth + eq))
+        --                                 ) shp ks kinds cnt_lth cnt_eq
+        --                         |> unzip
+        
+        -- let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps_fst) |> unzip3
+        -- let result_fst = scatter result is vs
+        -- let (_, A_fst, II1_fst) = zip3 lth_eq_per_elem_fst A II1'
+        --                         |> filter (\ ((lth, eq), _, i) ->
+        --                                     let kind = kinds[i] in
+        --                                     if kind == -1 then false
+        --                                     else if kind == 0 then lth == 1
+        --                                     else if kind == 1 then false
+        --                                     else lth == 0 && eq == 0
+        --                             )
+        --                         |> unzip3
         let result = replicate m 0f32
-        let II1' = map i64.i32 II1
-        -- First iteration taken out of the loop
-        let ps_fst = map2 (\ sum len -> sum / len) (reduce_by_index (replicate m (0)) (+) (0) II1' A) (map f32.i32 shp)
-        let ps_expanded_fst = map (\i -> ps_fst[i]) II1'
-        let lth_eq_per_elem_fst = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded_fst
-        let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem_fst |> unzip
-        let kinds = map3 (\ k lth eq->
-                                    if k == -1            then -1i8
-                                    else if k <= lth      then 0i8
-                                    else if k <= (lth+eq) then 1i8
-                                    else                       2i8
-                                ) ks cnt_lth cnt_eq
         
-        let (shp_fst, ks_fst) = map5 (\ len k kind lth eq->
-                                            if      kind == -1i8 then (len, -1)
-                                            else if kind ==  0i8 then (lth, k)
-                                            else if kind ==  1i8 then (0, -1)
-                                            else (len - (lth + eq), k - (lth + eq))
-                                        ) shp ks kinds cnt_lth cnt_eq
-                                |> unzip
-        
-        let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps_fst) |> unzip3
-        let result_fst = scatter result is vs
-        let (_, A_fst, II1_fst) = zip3 lth_eq_per_elem_fst A II1'
-                                |> filter (\ ((lth, eq), _, i) ->
-                                            let kind = kinds[i] in
-                                            if kind == -1 then false
-                                            else if kind == 0 then lth == 1
-                                            else if kind == 1 then false
-                                            else lth == 0 && eq == 0
-                                    )
-                                |> unzip3
-        
-        let (_,_,_,_,result) =
-            loop (ks: [m]i32, shp: [m]i32, II1', A, result) = ((copy ks_fst), shp_fst, (copy II1_fst), A_fst,  result_fst)
+        let (_,_,_,_,_,result) =
+            loop (ks: [m]i32, ps : [m]f32, shp: [m]i32, II1 : []i32, A, result) = (ks, ps, shp, II1, A, result)
             while (length A > 0) do
-                let ps = map2 (\ i size -> if size > 0 then A[i-1] else 0) (scan (+) 0 shp) shp
-
-                let ps_expanded = map (\i -> ps[i]) II1'
+                let ps_expanded = map (\i -> ps[i]) II1
                 let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (1i32,0i32) else if elem == p then (0i32,1i32) else (0i32,0i32))) A ps_expanded
-                -- Tried the below "optimization" of not generating a ps_expandend. It did not do a difference.
-                -- let lth_eq_per_elem = map2 (\ elem i -> (if elem < ps[i] then (1i32,0i32) else if elem == ps[i] then (0i32,1i32) else (0i32,0i32))) A II1'
-                let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
+                let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) (map i64.i32 II1) lth_eq_per_elem |> unzip
                 let kinds = map3 (\ k lth eq->
                                     if k == -1            then -1i8
                                     else if k <= lth      then 0i8
@@ -244,8 +238,8 @@ module RankSearchK = {
                 
                 let (_, is, vs) = filter (\(kind, _, _) -> kind == 1i8) (zip3 kinds (iota m) ps) |> unzip3
                 let result' = scatter result is vs
-
-                let (_, A', II1') = zip3 lth_eq_per_elem A II1'
+                
+                let (_, A', II1') = zip3 lth_eq_per_elem A II1
                                 |> filter (\ ((lth, eq), _, i) ->
                                             let kind = kinds[i] in
                                             if kind == -1 || kind == 1 then false
@@ -253,8 +247,12 @@ module RankSearchK = {
                                             else lth == 0 && eq == 0
                                     )
                                 |> unzip3
-                in (ks', shp', II1', A', result')
+
+                let ps' = map2 (\ i size -> if size > 0 then A'[i-1] else 0) (scan (+) 0 shp') shp'
+                in (ks', ps', shp', II1', A', result')
         in result
+
+
 
 
     let compilerFlattenedRankSearchBatch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n]f32) : [m]f32 =
@@ -331,6 +329,8 @@ module RankSearchK = {
 
                 in (ks', ps', (map i32.i64 shp'), As', runnings')
         in ps
+    
+    
 
 
 }
