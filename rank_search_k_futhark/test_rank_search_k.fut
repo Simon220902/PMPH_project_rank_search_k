@@ -20,7 +20,7 @@ entry validationUnoptimized [m] [n] (A : [m][n]f32) : bool =
 
     in reduce (&&) true (map2 (==) valid_res test_res)
 
--- Validation More Optimized
+-- Validation Optimized
 -- ==
 -- entry: validationOptimized
 -- random input { [10000][100]f32 }
@@ -36,12 +36,9 @@ entry validationOptimized [m] [n] (A : [m][n]f32) : bool =
     let ps = map2 (\ sum len -> sum / len) (reduce_by_index (replicate m (0)) (+) (0) (map i64.i32 II1) A) (map f32.i32 shp)
 
     let valid_res = RankSearchK.radixSortRankSearchBatch ks shp A
-    let test_res  = RankSearchK.flatRankSearchBatchMoreOptimized ps ks shp II1 A
+    let test_res  = RankSearchK.flatRankSearchBatchOptimized ps ks shp II1 A
 
     in reduce (&&) true (map2 (==) valid_res test_res)
-
-
-
 
 -- Validation Compiler flattened
 -- ==

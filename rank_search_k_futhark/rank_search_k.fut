@@ -138,15 +138,17 @@ module RankSearchK = {
                     let a = map (\ i -> A[i+i0]) (iota size) in -- A[i0:(i0+size)] in -- We don't know whether a slize or a map-iota are better?
                     radix_sort_based_rank_search_k k a
                 ) ks shp start_indices
-    let flatRankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
-                                    (II1: *[n]i32) (A: [n]f32) : [m]f32 =
-        let result = replicate m 0f32
+    
+    let generalizedFlatRankSearchBatch [m] [n] 't (lth : t -> t -> bool) (eq : t -> t -> bool) (zero : t)
+                                                  (ks: [m]i32) (shp: [m]i32)
+                                                  (II1: *[n]i32) (A: [n]t) : [m]t =
+        let result = replicate m zero
         let (_,_,_,_,result) =
             loop (ks: [m]i32, shp: [m]i32, II1, A, result)
             while (length A > 0) do
-                let ps = map2 (\ i size -> if size > 0 then A[i-1] else 0) (scan (+) 0 shp) shp
+                let ps = map2 (\ i size -> if size > 0 then A[i-1] else zero) (scan (+) 0 shp) shp
                 let ps_expanded = map (\i -> ps[i]) II1
-                let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (1,0) else if elem == p then (0,1) else (0,0))) A ps_expanded
+                let lth_eq_per_elem = map2 (\ elem p -> (if lth elem p then (1,0) else if eq elem p then (0,1) else (0,0))) A ps_expanded
                 let II1' = map i64.i32 II1
             let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
                 let kinds = map3 (\ k lth eq->
@@ -181,15 +183,16 @@ module RankSearchK = {
                 in (ks', shp', II1', A', result')
         in result
 
-    let flatRankSearchBatchOptimized [m] [n] (ps : [m]f32) (ks: [m]i32) (shp: [m]i32)
-                                            (II1: *[n]i32) (A: [n]f32) : [m]f32 =
-        let result = replicate m 0f32
+    let generalizedFlatRankSearchBatchOptimized [m] [n] 't (lth : t -> t -> bool) (eq : t -> t -> bool) (zero : t)
+                                                           (ps : [m]t) (ks: [m]i32) (shp: [m]i32)
+                                                           (II1: *[n]i32) (A: [n]t) : [m]t =
+        let result = replicate m zero
         
         let (_,_,_,_,_,result) =
-            loop (ks: [m]i32, ps : [m]f32, shp: [m]i32, II1 : []i32, A, result) = (ks, ps, shp, II1, A, result)
+            loop (ks: [m]i32, ps : [m]t, shp: [m]i32, II1 : []i32, A : []t, result) = (ks, ps, shp, II1, A, result)
             while (length A > 0) do
                 let ps_expanded = map (\i -> ps[i]) II1
-                let lth_eq_per_elem = map2 (\ elem p -> (if elem < p then (true,false) else if elem == p then (false,true) else (false,false))) A ps_expanded
+                let lth_eq_per_elem = map2 (\ elem p -> (if lth elem p then (true,false) else if eq elem p then (false,true) else (false,false))) A ps_expanded
                 let (cnt_lth, cnt_eq) =
                     map (\ (a, b) -> (i32.bool a, i32.bool b)) lth_eq_per_elem
                     |> reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) (map i64.i32 II1)
@@ -220,10 +223,17 @@ module RankSearchK = {
                                     )
                                 |> unzip3
 
-                let ps' = map2 (\ i size -> if size > 0 then A'[i-1] else 0) (scan (+) 0 shp') shp'
+                let ps' = map2 (\ i size -> if size > 0 then A'[i-1] else zero) (scan (+) 0 shp') shp'
                 in (ks', ps', shp', II1', A', result')
         in result
 
+    let flatRankSearchBatch [m] [n] (ks: [m]i32) (shp: [m]i32)
+                                    (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+        generalizedFlatRankSearchBatch (<) (==) 0f32 ks shp II1 A
+
+    let flatRankSearchBatchOptimized [m] [n] (ps : [m]f32) (ks: [m]i32) (shp: [m]i32)
+                                            (II1: *[n]i32) (A: [n]f32) : [m]f32 =
+        generalizedFlatRankSearchBatchOptimized (<) (==) (0f32) ps ks shp II1 A
 
     let compilerFlattenedRankSearchBatch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n]f32) : [m]f32 =
         let offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota m)) |> scan (+) 0
@@ -300,7 +310,4 @@ module RankSearchK = {
                 in (ks', ps', (map i32.i64 shp'), As', runnings')
         in ps
     
-    
-
-
 }
