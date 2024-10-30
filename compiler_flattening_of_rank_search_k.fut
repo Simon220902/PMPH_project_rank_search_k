@@ -142,25 +142,24 @@ let batchNestedRankSearch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
                                                     |> unzip
             let (cnts_lth, cnts_eq) = unzip cnts_lth_eq
             let cnts_gth = map3 (\ A_partioned cnt_lth cnt_eq -> (length A_partioned) - cnt_lth - cnt_eq) As_partioned cnts_lth cnts_eq
-            let (As_lth_ps, As_eq_ps, As_gth_ps) =
-                map4 (\ A_partioned cnt_lth cnt_eq cnt_gth ->
-                        ( map (\ i -> A_partioned[i]) (iota cnt_lth),
-                          map (\ i -> A_partioned[i+cnt_lth]) (iota cnt_eq),
-                          map (\ i -> A_partioned[i+cnt_lth+cnt_eq]) (iota cnt_gth)
-                        )
-                     ) As_partioned cnts_lth cnts_eq cnts_gth
-                |> unzip3
 
             in
-            let (ks', ps', As', _, _) =
-                map5 (\ k p A_lth_p A_eq_p A_gth_p -> 
-                        if k <= (length A_lth_p) && running
-                        then (k, A_lth[(length A_lth_ps)-1], A_lth, true)
-                        else if k <= ((length A_lth_p) + (length A_eq_p)) || not running
+            let (ks', ps', As', runnings') =
+                map (\ k p A_partioned cnt_lth cnt_eq cnt_gth running -> 
+                        if k <= cnt_lth && running
+                        then
+                            let is = iota cnt_lth
+                            let A_lth = map (\ i -> A_partioned[i]) is
+                            in (k, A_lth[cnt_lth-1], A_lth, true)
+                        else if k <= cnt_lth + cnt_eq || not running
                         then (k, p, [], false)
-                        else ((k-(length A_lth_p) - (length A_eq_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
-                    ) ks ps As_lth_ps As_eq_ps As_gth_ps
-                |> unzip5
+                        else
+                            let is = map (\ i -> cnt_lth + cnt_eq + i ) (iota cnt_gth)
+                            let A_gth = filter (> p) A_partioned
+                            in ((k-cnt_lth-cnt_eq), A_gth[cnt_gth-1], A_gth, true)
+                    ) ks ps As_partioned cnts_lth cnts_eq cnts_gth runnings
+                    |> unzip4
+            in (ks', ps', As', runnings')
     in ps
 -- Now we can make loop distribution on partition3
 let batchNestedRankSearch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
@@ -198,27 +197,25 @@ let batchNestedRankSearch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
             let arrs' = map2 (\ arr inds -> scatter (copy arr) inds arr) As indss
             let (As_partioned, (cnts_lth, cnts_eq)) = (arrs', (i1s, i2s))
             -- PARTITION3 END
-
             let cnts_gth = map3 (\ A_partioned cnt_lth cnt_eq -> (length A_partioned) - cnt_lth - cnt_eq) As_partioned cnts_lth cnts_eq
-            let (As_lth_ps, As_eq_ps, As_gth_ps) =
-                map4 (\ A_partioned cnt_lth cnt_eq cnt_gth ->
-                        ( map (\ i -> A_partioned[i]) (iota cnt_lth),
-                          map (\ i -> A_partioned[i+cnt_lth]) (iota cnt_eq),
-                          map (\ i -> A_partioned[i+cnt_lth+cnt_eq]) (iota cnt_gth)
-                        )
-                     ) As_partioned cnts_lth cnts_eq cnts_gth
-                |> unzip3
 
             in
-            let (ks', ps', As', _, _) =
-                map5 (\ k p A_lth_p A_eq_p A_gth_p -> 
-                        if k <= (length A_lth_p) && running
-                        then (k, A_lth[(length A_lth_ps)-1], A_lth, true)
-                        else if k <= ((length A_lth_p) + (length A_eq_p)) || not running
+            let (ks', ps', As', runnings') =
+                map (\ k p A_partioned cnt_lth cnt_eq cnt_gth running -> 
+                        if k <= cnt_lth && running
+                        then
+                            let is = iota cnt_lth
+                            let A_lth = map (\ i -> A_partioned[i]) is
+                            in (k, A_lth[cnt_lth-1], A_lth, true)
+                        else if k <= cnt_lth + cnt_eq || not running
                         then (k, p, [], false)
-                        else ((k-(length A_lth_p) - (length A_eq_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
-                    ) ks ps As_lth_ps As_eq_ps As_gth_ps
-                |> unzip5
+                        else
+                            let is = map (\ i -> cnt_lth + cnt_eq + i ) (iota cnt_gth)
+                            let A_gth = filter (> p) A_partioned
+                            in ((k-cnt_lth-cnt_eq), A_gth[cnt_gth-1], A_gth, true)
+                    ) ks ps As_partioned cnts_lth cnts_eq cnts_gth runnings
+                    |> unzip4
+            in (ks', ps', As', runnings')
     in ps
 
 -- Now we flatten. Giving As as a flat array and a shp.
@@ -249,7 +246,7 @@ let batchNestedRankSearch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n] f32) : [
     let ps = map2 (\row_offset i -> As[row_offset+i]) offsets (map (-1) shp) 
     let runnings = replicate true m
     let (_, ps, _, _) =
-        loop (ks, ps, As, runnings) = (ks, ps, As, runnings)
+        loop (ks, ps, shp, As, runnings) = (ks, ps, shp, As, runnings)
         while (reduce (or) false runnings) do
             -- PARTITION3 BEGIN
             -- let (As_partioned, cnts_lth_eq) = map2 (\ A p ->
@@ -365,85 +362,217 @@ let batchNestedRankSearch [m] [n] (ks: [m]i64) (shp : [m]i32) (As : [n] f32) : [
             -- let cnts_gth = map3 (\ A_partioned cnt_lth cnt_eq -> (length A_partioned) - cnt_lth - cnt_eq) As_partioned cnts_lth cnts_eq
             -- let cnts_gth = map3 (\ size cnt_lth cnt_eq -> size - cnt_lth - cnt_eq) shp cnts_lth cnts_eq
             let cnts_gth = map3 (\ size cnt_lth cnt_eq -> size - cnt_lth - cnt_eq) shp cnts_lth cnts_eq
-
-            -- let (As_lth_ps, As_eq_ps, As_gth_ps) =
-            --     map4 (\ A_partioned cnt_lth cnt_eq cnt_gth ->
-            --             ( map (\ i -> A_partioned[i]) (iota cnt_lth),
-            --               map (\ i -> A_partioned[i+cnt_lth]) (iota cnt_eq),
-            --               map (\ i -> A_partioned[i+cnt_lth+cnt_eq]) (iota cnt_gth)
-            --             )
-            --          ) As_partioned cnts_lth cnts_eq cnts_gth
-            --     |> unzip3
-            -- We do loop distribution
-            -- let As_lth_ps = map2 (\ A_partioned cnt_lth ->
-            --                         map (\ i -> A_partioned[i]) (iota cnt_lth)
-            --                      ) As_partioned cnts_lth
-            -- let As_eq_ps = map3 (\ A_partioned cnt_lth cnt_eq ->
-            --                         map (\ i -> A_partioned[i+cnt_lth]) (iota cnt_eq)
-            --                      ) As_partioned cnts_lth cnts_eq
-            -- let As_gth_ps = map4 (\ A_partioned cnt_lth cnt_eq cnt_gth ->
-            --                         map (\ i -> A_partioned[i+cnt_lth+cnt_eq]) (iota cnt_gth)
-            --                      ) As_partioned cnts_lth cnts_eq cnts_gth
-            
-            
-            -- We take the indexes out:
-            -- let lth_iotas = map iota cnts_lth
-            -- let As_lth_ps = map2 (\ A_partioned is ->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned lth_iotas
-            -- let eq_iotas = map iota cnts_eq
-            -- let eq_iss = map2 (\ cnt_lth eq_iota -> map (+cnt_lth) eq_iota) cnts_lth eq_iotas
-            -- let As_eq_ps = map2 (\ A_partioned is ->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned eq_iss
-            -- let gth_iotas = map iota cnts_gth
-            -- let gth_iss = map3 (\ cnt_lth cnt_eq gth_iota -> map (+(cnt_lth+cnt_eq)) gth_iota) cnts_lth cnts_eq gth_iotas
-            -- let As_gth_ps = map2 (\ A_partioned is->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned gth_iss
-
-            -- We have to expand cnts_lth and cnts_eq
-            -- let cnts_lth_expanded = map2 (\ cnt_eq cnt_lth -> replicate cnt_eq cnt_lth) cnts_eq cnts_lth
-            -- let cnts_lth_plus_eq_expanded = map3 (\ cnt_gth cnt_lth cnt_eq -> replicate cnt_gth (cnt_lth + cnt_eq) cnts_gth cnts_lth cnts_eq
-            
-
-            -- let lth_iotas = map iota cnts_lth
-            -- let As_lth_ps = map2 (\ A_partioned is ->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned lth_iotas
-
-            -- let eq_iotas = map iota cnts_eq
-            -- let eq_iss = map2 (map2 (+)) cnts_lth_expanded eq_iotas
-            -- let As_eq_ps = map2 (\ A_partioned is ->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned eq_iss
-
-            -- let gth_iotas = map iota cnts_gth
-            -- let gth_iss = map2 (map2 (+)) cnts_lth_plus_eq_expanded gth_iotas
-            -- let As_gth_ps = map2 (\ A_partioned is->
-            --                         map (\ i -> A_partioned[i]) is
-            --                      ) As_partioned gth_iss
-
-
             -- NOT FLAT FROM HERE
             in
-            let (ks', ps', As', _, _) =
-                map5 (\ k p A_lth_p A_eq_p A_gth_p -> 
-                        if k <= (length A_lth_p) && running
-                        then (k, A_lth[(length A_lth_ps)-1], A_lth, true)
-                        else if k <= ((length A_lth_p) + (length A_eq_p)) || not running
-                        then (k, p, [], false)
-                        else ((k-(length A_lth_p) - (length A_eq_p)), A_gth_p[(length A_gth_p)-1], A_gth_p, true)
-                    ) ks ps As_lth_ps As_eq_ps As_gth_ps
-                |> unzip5
+            -- let (ks', ps', As', runnings') =
+            --     map (\ k p A_partioned cnt_lth cnt_eq cnt_gth -> 
+            --             if k <= cnt_lth && running
+            --             then
+            --                 let is = iota cnt_lth
+            --                 let A_lth = map (\ i -> A_partioned[i]) is
+            --                 in (k, A_lth[cnt_lth-1], A_lth, true)
+            --             else if k <= cnt_lth + cnt_eq || not running
+            --             then (k, p, [], false)
+            --             else
+            --                 let is = map (\ i -> cnt_lth + cnt_eq + i) (iota cnt_gth)
+            --                 in ((k-cnt_lth-cnt_eq), A_gth[cnt_gth-1], A_gth, true)
+            --         ) ks ps As_partioned cnts_lth cnts_eq cnts_gth
+            --         |> unzip4
+            -- We separate the calculation of ks', ps', runnings' and As'
+            let ks' = map4 (\ k cnt_lth cnt_eq running ->
+                            if k <= cnt_lth && running then k
+                            else if k <= cnt_lth + cnt_eq || not running then k
+                            else k-cnt_lth-cnt_eq
+                          ) ks cnts_lth cnts_eq runnings
+            let ps' = map5 (\ p A_partioned cnt_lth cnt_eq running -> 
+                                if k <= cnt_lth && running
+                                then A_partioned[cnt_lth-1]
+                                else if k <= cnt_lth + cnt_eq || not running
+                                then p
+                                else A_partioned[(length A_partioned) - 1]
+                           ) ps As_partioned cnts_lth cnts_eq runnings
+    
+            let runnings' =  map6 (\ k cnt_lth cnt_eq cnt_gth running -> 
+                                    if k <= cnt_lth && running
+                                    then true
+                                    else if k <= cnt_lth + cnt_eq || not running
+                                    then false
+                                    else true
+                                  ) ks cnts_lth cnts_eq cnts_gth runnings
+
+            -- We also need to calculate the new shape.
+            let shp' = map5 (\ k cnt_lth cnt_eq cnt_gth running -> 
+                                if k <= cnt_lth && running
+                                then cnt_lth
+                                else if k <= cnt_lth + cnt_eq || not running
+                                then 0
+                                else cnt_gth
+                            ) ks cnts_lth cnts_eq cnts_gth runnings
+            -- Nested loop parallelism version of As':
+            -- let As' = map (\ k p A_partioned cnt_lth cnt_eq cnt_gth runnings -> 
+            --                     if k <= cnt_lth && running
+            --                     then
+            --                         let is = iota cnt_lth
+            --                         in map (\ i -> A_partioned[i])
+            --                     else if k <= cnt_lth + cnt_eq || not running
+            --                     then []
+            --                     else
+            --                         let is = map (\ i -> cnt_lth + cnt_eq + i) (iota cnt_gth)
+            --                         in map (\i -> A_partioned[i])
+            --         ) ks ps As_partioned cnts_lth cnts_eq cnts_gth
+            -- Flattening, we can reuse ks', ps' and runnings' (no falttening needed)
+            -- We just need to flatten As. Therefore we change to fit the form of the flattening rule:
+            -- let lth_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --     k <= cnt_lth && running
+            -- let lth_then (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --     let is = iota cnt_lth
+            --     in map (\ i -> A_partioned[i]) is
+            -- let eq_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --     k <= cnt_lth + cnt_eq || not running
+            -- let eq_then (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --     []
+            -- let eq_else (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --     let is = map (\ i -> cnt_lth + cnt_eq + i) (iota cnt_gth)
+            --     in map (\i -> A_partioned[i]) is
+            -- let snd_if (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+            --      if eq_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            --      then eq_then (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            --      else eq_else (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            -- let zipped_data = zip5 ks ps As_partioned (zip3 cnts_lth cnts_eq cnts_gth) runnings
+            -- let As' = map (\ (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), runnings)
+            --                 if lth_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), runnings)
+            --                 then lth_then (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), runnings)
+            --                 else snd_if (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), runnings)
+            --               ) zipped_data
+            -- Flattening rule for if:
+            -- F( map (\(x: a) : b -> if p x then f x else g x) xs ) =>
+            -- ( [length xs],
+            -- let len = length xs
+            -- let (is, q) = partition2 (\i -> p (x[i])) (iota len)
+            -- let (is_then, is_else ) = split q is
+            -- let xs_then = map (\i_then -> xs[i_then]) is_then
+            -- let res_then= F ( map f xs_then )
+            -- let xs_else = map (\i_else -> xs[i_else]) is_else
+            -- let res_else= F ( map g xs_else )
+            -- let res = scatter (replicate len dummy) is_then xs_then
+            -- in scatter res is_else xs_else
+            -- )
+            -- Now we flatten the if.
+            let zipped_data = zip5 ks_expanded ps_expanded As_partioned (zip3 cnts_lth_expanded cnts_lth_plus_eq_expanded cnts_gth_expanded) runnings_expanded
+            let len = len As_partioned
+            let (is_lth, q_lth) = partition2 (\ i -> lth_pred zipped_data[i]) (iota len)
+            let (is_then, is_else) = split q_lth is_lth
+            let zipped_data_then = map (\ i_then -> zipped_data_then[i_then]) is_then
+            -- let res_then = F (map lth_then xs_then) = map
+            -- let res_then = F (map (\ (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) ->
+            --                         let lth_is = iota cnt_lth
+            --                         in map (\ i -> A_partioned[i]) is
+            --                    ) zipped_data_then)
+            -- We do lopp distribution
+            -- let res_then = 
+            --     let lth_iss = F(map (\ cnt_lth ->
+            --                             iota cnt_lth
+            --                       ) cnts_lth) |> flatten
+            --     in F(map2 (\ (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) lth_is ->
+            --                 map (\ i -> A_partioned[i]) lth_is
+            --             ) zipped_data_then lth_iss) -- Here we can simply lift the outer map by expanding lth_iss
+            -- Now we can flatten each of them:
+            let res_then =
+                let lth_iss =
+                    let flag = mkFlagArray cnts_lth 0 (replicate 1 m)
+                    let vals = map (\ f -> if f!=0 then 0 else 1) flag
+                    in sgmScanInc (+) 0 flag vals
+                in let row_offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota (length shp))) |> scan (+) 0
+                   let row_offsets_expanded =
+                        let (flag_cnts_lth, flag_row_offsets) = zip cnts_lth row_offsets |> mkFlagArray cnts_lth (0,0) |> unzip
+                        in sgmScanInc (+) 0 flag_cnts_lth flag_row_offsets
+                   in map2 (\row_offset i -> As_partioned[row_offset+i]) row_offsets_expanded lth_iss
+            let zipped_data_else = map (\i_else -> zipped_data[i_else]) is_else
+            -- let res_else = F (map snd_if zipped_data_else)
+            -- let res_else = F (map (\ ->
+            --                         if eq_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            --                         then eq_then (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            --                         else eq_else (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running)
+            --                       ) zipped_data_else)
+            let res_else =
+                let len = length zipped_data_else
+                let eq_pred (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) =
+                    k <= cnt_lth + cnt_eq || not running
+                let (is_gth, q_gth) = partition2 (\ i -> eq_pred zipped_data_else[i]) (iota len)
+                let (is_gth_then, is_gth_else) = split q_gth is_gth
+                let zipped_data_else_then = map (\ i_gth_then -> zipped_data_else[i_gth_then]) is_gth_then
+                -- let res_then = F (map eq_then zipped_data_else_then)
+                -- let res_then = F (map (\ _ -> []) zipped_data_else_then)
+                let res_else_then = []
+                let zipped_data_else_else = map (\ i_gth_else -> zipped_data_else[i_gth_else]) is_gth_else
+                -- let res_else = F (map eq_else zipped_data_else_else)
+                -- let res_else = map (\ (k, p, A_partioned, (cnt_lth, cnt_eq, cnt_gth), running) ->
+                --                     let is = map (\ i -> cnt_lth + cnt_eq + i) (iota cnt_gth)
+                --                     in map (\i -> A_partioned[i]) is
+                --                    ) zipped_data_else_else
+                let res_else_else =
+                    let gth_iss =
+                        let flag = mkFlagArray cnts_gth 0 (replicate 1 m)
+                        let vals = map (\ f -> if f!=0 then 0 else 1) flag
+                        let iotas = sgmScanInc (+) 0 flag vals
+                        let cnts_lth_eq_expanded =
+                            let cnts_lth_eq = map2 (+) cnts_lth cnts_eq
+                            let (flag_cnts_gth, flag_cnts_lth_eq) = zip cnts_gth cnts_lth_eq |> mkFlagArray cnts_gth (0,0) |> unzip
+                            in sgmScanInc (+) 0 flag_cnts_gth flag_cnts_lth_eq
+                        in map2 (+) iotas cnts_lth_eq_expanded
+                    in let row_offsets = (map (\ j -> if j == 0 then 0 else shp[j-1]) (iota (length shp))) |> scan (+) 0
+                    let row_offsets_expanded =
+                        let (flag_cnts_gth, flag_row_offsets) = zip cnts_gth row_offsets |> mkFlagArray cnts_gth (0,0) |> unzip
+                        in sgmScanInc (+) 0 flag_cnts_gth flag_row_offsets
+                    in map2 (\row_offset i -> As_partioned[row_offset+i]) row_offsets_expanded gth_iss
+                let res = scatter (replicate len 0) is_gth_then res_else_then
+                in scatter res is_gth_else res_else_else
+            
+            let final_len = reduce (+) 0 shp' -- 
+            let res = scatter (replicate final_len 0) is_then res_then -- This should probably not be len? but the new len of the new shape?
+            let As' = scatter res is_else res_else
+
+            in (ks', ps', shp', As', runnings')
     in ps
 
 
--- Questions for Cosmin:
--- -- We have written a version using the loop as you described instead of the tail-recursion,
-   -- though we can not really figure out how we should think of this in terms of flattening.
-   -- The loop introduces a "necessarily" sequential number of steps. Is it just the loop-swapping? since map2 is parallel?
 
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
+-- *********************************************************************************************************************************************************************
 
 
 
