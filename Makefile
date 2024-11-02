@@ -3,8 +3,8 @@ CUDA_DIR = rank_search_k_cub_cuda
 FUTHARK_DIR = rank_search_k_futhark
 FUTHARK_BENCH_FILE = $(FUTHARK_DIR)/bench_rank_search_k.fut
 FUTHARK_BENCH = futhark bench --backend=cuda $(FUTHARK_BENCH_FILE)
-FUTHARK_TEST_FILE = $(FUTHARK_DIR)/test_rank_search_k.fut
-FUTHARK_TEST = futhark test --backend=cuda $(FUTHARK_TEST_FILE)
+FUTHARK_VALIDATE_FILE = $(FUTHARK_DIR)/validate_rank_search_k.fut
+FUTHARK_VALIDATE = futhark test --backend=cuda $(FUTHARK_VALIDATE_FILE)
 
 # Targets
 .PHONY: all bench validate clean
@@ -16,7 +16,7 @@ bench:
 
 # Validate
 validate:
-	$(FUTHARK_BENCH)
+	$(FUTHARK_VALIDATE)
 
 # Clean (optional)
 clean:
