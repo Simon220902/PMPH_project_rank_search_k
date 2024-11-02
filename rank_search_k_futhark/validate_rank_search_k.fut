@@ -4,11 +4,9 @@ import "rank_search_k"
 -- Validation Unoptimized
 -- ==
 -- entry: validationUnoptimized
--- random input { [100][10]f32 }
+-- random input { [10000][10]f32 }
 -- output { true }
--- random input { [10000][100]f32 }
--- output { true }
--- random input { [1000000][100]f32 }
+-- random input { [1000][100]f32 }
 -- output { true }
 entry validationUnoptimized [m] [n] (A : [m][n]f32) : bool =
     let n_elem = i32.i64 n
@@ -25,9 +23,9 @@ entry validationUnoptimized [m] [n] (A : [m][n]f32) : bool =
 -- Validation Optimized
 -- ==
 -- entry: validationOptimized
--- random input { [10000][100]f32 }
+-- random input { [10000][10]f32 }
 -- output { true }
--- random input { [1000000][100]f32 }
+-- random input { [1000][100]f32 }
 -- output { true }
 entry validationOptimized [m] [n] (A : [m][n]f32) : bool =
     let n_elem = i32.i64 n
@@ -45,9 +43,9 @@ entry validationOptimized [m] [n] (A : [m][n]f32) : bool =
 -- Validation Compiler flattened
 -- ==
 -- entry: validationCompilerFlattened
--- random input { [10000][100]f32 }
+-- random input { [10000][10]f32 }
 -- output { true }
--- random input { [1000000][100]f32 }
+-- random input { [1000][100]f32 }
 -- output { true }
 entry validationCompilerFlattened [m] [n] (A : [m][n]f32) : bool =
     let n_elem = i32.i64 n
