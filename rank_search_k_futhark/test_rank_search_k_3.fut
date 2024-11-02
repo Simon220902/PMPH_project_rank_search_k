@@ -4,6 +4,10 @@ import "rank_search_k"
 -- Validation Unoptimized
 -- ==
 -- entry: validationUnoptimized
+-- random input { [100][10]f32 }
+-- output { true }
+
+
 -- random input { [10000][100]f32 }
 -- output { true }
 -- random input { [1000000][100]f32 }

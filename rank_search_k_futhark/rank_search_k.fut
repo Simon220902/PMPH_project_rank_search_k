@@ -123,29 +123,80 @@ module Partition3 = {
         let indss' = map2 (+) offsets_expanded indss
         let arrs' = scatter (copy As) (map i64.i32 indss') As
         in (copy arrs', (copy i1s, copy i2s))
-    
-    let batchReport [m] [n] (p1: (f32->f32->bool)) (p2 : (f32->f32->bool))
-                            (As : [n]f32) (shp : [m]i32) (arg2s : [m]f32) =
-        let arg2s_expanded = expandf32 shp arg2s :> [n]f32
-        let cs1s = map2 (\ elem arg2 -> p1 elem arg2) As arg2s_expanded :> [n]bool
+    let batchToReport [n] [m] (p1: (f32->f32->bool)) (p2 : (f32->f32->bool)) (As : [n]f32) (shp : [m]i32) (ps : [m]f32) :  ([n]f32, ([m]i32, [m]i32)) =
+        let ps_expanded = expandf32 shp ps :> [n]f32
+        let cs1s = map2 p1 As ps_expanded :> [n]bool
         let tfs1s = map (\ f -> if f then 1 else 0 ) cs1s :> [n]i32
         let As_flags = mkFlagArray shp false (replicate m true) :> [n]bool
         let isT1s = sgmScanInc (+) 0 As_flags tfs1s
         let offsets = scanex (+) 0 shp :> [m]i32
         let i1s = map2 (\offset i ->
-                            if i>=0 then isT1s[offset+i]
-                            else         0
+                            if i == -1 then 0
+                            else            isT1s[offset+i]
                         ) offsets (map (\size -> size - 1) shp)
-        let cs2s = map2 (\ elem arg2 -> p2 elem arg2) As arg2s_expanded
+        -- p2
+        let cs2s = map2 p2 As ps_expanded
+        let tfs2s = map (\ f -> if f then 1 else 0 ) cs2s
+        let isT2s =
+            let tfs2s_scan = sgmScanInc (+) 0 As_flags tfs2s :> [n]i32
+            let i1s_expanded = expandi32 shp i1s :> [n]i32
+            in map2 (+) i1s_expanded tfs2s_scan
+
+        let i2s = map2 (\offset i ->
+                            if i == -1 then 0
+                            else            isT2s[offset+i]
+                        ) offsets (map (\size -> size - 1) shp)
+                |> map2 (\ i1 i2 -> i2 - i1) i1s
+
+
+        -- let i2s_s1 = map2 (\ offset i -> if i == -1 then 0 else isT2s[offset+i]) offsets (map (\size -> size-1i32) shp)
+        -- let i2s = map2 (\ i2_s1 i1 -> i2_s1 - i1) i2s_s1 i1s
+        
+        
+        let i1s_expanded = expandi32 shp i1s :> [n]i32
+        let i2s_expanded = expandi32 shp i2s :> [n]i32
+        let ffss = map2 (\ c1 c2 -> if c1 || c2 then 0 else 1) cs1s cs2s
+        let isFs_s1 = sgmScanInc (+) 0 As_flags ffss
+            -- let (flag_size, flag_i2) = zip shp i2s |> mkFlagArray shp (0,0) |> unzip
+            -- in sgmScanInc (+) 0 flag_size flag_i2
+        let isFs = map3 (\ i1 i2 isF_s1 -> i1 + i2 + isF_s1) i1s_expanded i2s_expanded isFs_s1
+        let indss = map5 (\ c1 c2 iT1 iT2 iF ->
+                                if c1 then iT1-1
+                                else if c2 then iT2-1
+                                else iF - 1
+                        ) cs1s cs2s isT1s isT2s isFs
+                    :> [n]i32
+        let offsets = map (\ i -> if i == 0 then 0 else shp[i-1]) (iota m) |> scan (+) 0
+        let offsets_expanded =
+            let (flag_size, flag_offset) = zip shp offsets |> mkFlagArray shp (0,0) |> unzip
+            in sgmScanInc (+) 0 (map (!= 0) flag_size) flag_offset :> [n]i32
+        let indss' = map2 (+) offsets_expanded indss
+        let arrs' = scatter (copy As) (map i64.i32 indss') As
+        in (copy arrs', (copy i1s, copy i2s))
+    
+    let batchReport [m] [n] (p1: (f32->f32->bool)) (p2 : (f32->f32->bool))
+                            (As : [n]f32) (shp : [m]i32) (arg2s : [m]f32) =
+        let arg2s_expanded = expandf32 shp arg2s :> [n]f32
+        let cs1s = map2 p1 As arg2s_expanded :> [n]bool
+        let tfs1s = map (\ f -> if f then 1 else 0 ) cs1s :> [n]i32
+        let As_flags = mkFlagArray shp false (replicate m true) :> [n]bool
+        let isT1s = sgmScanInc (+) 0 As_flags tfs1s
+        let offsets = scanex (+) 0 shp :> [m]i32
+        let i1s = map2 (\offset i ->
+                            if i == -1 then 0
+                            else            isT1s[offset+i]
+                        ) offsets (map (\size -> size - 1) shp)
+        let cs2s = map2 p2 As arg2s_expanded
         let tfs2s = map (\ f -> if f then 1 else 0 ) cs2s
         let isT2s =
             let tfs2s_scan = sgmScanInc (+) 0 As_flags tfs2s :> [n]i32
             let i1s_expanded = expandi32 shp i1s :> [n]i32
             in map2 (+) i1s_expanded tfs2s_scan
         let i2s = map2 (\offset i ->
-                            if i>=0 then isT2s[offset+i]
-                            else         0
+                            if i == -1 then 0
+                            else            isT2s[offset+i]
                         ) offsets (map (\size -> size - 1) shp)
+                |> map2 (\ i1 i2 -> i2 - i1) i1s
         let ffss = map2 (\ c1 c2 -> if c1 || c2  then 0 else 1) cs1s cs2s
         let isFs =
             let ffss_scan = sgmScanInc (+) 0 As_flags ffss :> [n]i32
@@ -153,12 +204,15 @@ module Partition3 = {
             let i1plusi2s_expanded = expandi32 shp i1plusi2 :> [n]i32
             in map2 (+) i1plusi2s_expanded ffss_scan
     
-        let indss = map5 (\ c1 c2 iT1 iT2 iF ->
-                            if c1 then iT1-1
-                            else if c2 then iT2-1
-                            else iF - 1
-                        ) cs1s cs2s isT1s isT2s isFs
-        
+        let indss =
+            let offsets_expanded = expandi32 shp offsets :> [n]i32
+            in (map5 (\ c1 c2 iT1 iT2 iF ->
+                        if c1 then iT1-1
+                        else if c2 then iT2-1
+                        else iF - 1
+                    ) cs1s cs2s isT1s isT2s isFs)
+                |> map2 (+) offsets_expanded
+    
         let As' = scatter (copy As) (map i64.i32 indss) As
         in
         (As', (i1s, i2s))
@@ -169,7 +223,7 @@ module RankSearchKReport = {
                                 (shp : [m]i32) (II1 : [n]i64) : [m]f32 =
         let (_, _, _, _, results) =
             loop ((ks : [m]i32) , As, (shp : [m]i32), II1, results : [m]f32) = (ks, As, shp, II1, (replicate m f32.nan))
-            while (reduce (+) 0 shp) > 0 do
+            while (length As > 0) do
                 let ps  = map3 (\ i size result ->
                                     if size > 0 then As[i-1]
                                     else             result
@@ -195,12 +249,12 @@ module RankSearchKReport = {
                                         if kind == 1 then p
                                         else              result
                                     ) kinds ps results
-                let shp' = map3 (\ kind cnt_lth cnt_eq ->
+                let shp' = map4 (\ kind cnt_lth cnt_eq size ->
                                     if kind == -1     then 0
                                     else if kind == 0 then cnt_lth
                                     else if kind == 1 then 0
-                                    else                   cnt_eq
-                                ) kinds cnts_lth cnts_eq
+                                    else                   size - cnt_lth - cnt_eq
+                                ) kinds cnts_lth cnts_eq shp
                 let (_, _, As', II1') = filter (\ (lth, eq, _, i) ->
                                                     let kind = kinds[i] in
                                                     if kind == -1     then false
@@ -211,7 +265,6 @@ module RankSearchKReport = {
                                     |> unzip4
                 in (ks', As', shp', II1', results')
         in results
-
 
     let compilerThinkingBatchRankSearch [m] [n] (ks: [m]i32) (As: [n]f32) (shp : [m]i32) : [m]f32 =
         let (_, _, _, result) =
@@ -249,7 +302,7 @@ module RankSearchKReport = {
                     let n' = reduce (+) 0 shp' |> i64.i32
                     let old_offsets_expanded =
                         scanex (+) 0 shp
-                        |> expandi32 shp
+                        |> expandi32 shp'
                         |> map i64.i32 :> [n']i64
                     let new_offsets_expanded =
                         scanex (+) 0 shp'
