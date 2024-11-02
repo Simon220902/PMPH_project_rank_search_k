@@ -123,8 +123,156 @@ module Partition3 = {
         let indss' = map2 (+) offsets_expanded indss
         let arrs' = scatter (copy As) (map i64.i32 indss') As
         in (copy arrs', (copy i1s, copy i2s))
+    
+    let batchReport [m] [n] (p1: (f32->f32->bool)) (p2 : (f32->f32->bool))
+                            (As : [n]f32) (shp : [m]i32) (arg2s : [m]f32) =
+        let arg2s_expanded = expandf32 shp arg2s :> [n]f32
+        let cs1s = map2 (\ elem arg2 -> p1 elem arg2) As arg2s_expanded :> [n]bool
+        let tfs1s = map (\ f -> if f then 1 else 0 ) cs1s :> [n]i32
+        let As_flags = mkFlagArray shp false (replicate m true) :> [n]bool
+        let isT1s = sgmScanInc (+) 0 As_flags tfs1s
+        let offsets = scanex (+) 0 shp :> [m]i32
+        let i1s = map2 (\offset i ->
+                            if i>=0 then isT1s[offset+i]
+                            else         0
+                        ) offsets (map (\size -> size - 1) shp)
+        let cs2s = map2 (\ elem arg2 -> p2 elem arg2) As arg2s_expanded
+        let tfs2s = map (\ f -> if f then 1 else 0 ) cs2s
+        let isT2s =
+            let tfs2s_scan = sgmScanInc (+) 0 As_flags tfs2s :> [n]i32
+            let i1s_expanded = expandi32 shp i1s :> [n]i32
+            in map2 (+) i1s_expanded tfs2s_scan
+        let i2s = map2 (\offset i ->
+                            if i>=0 then isT2s[offset+i]
+                            else         0
+                        ) offsets (map (\size -> size - 1) shp)
+        let ffss = map2 (\ c1 c2 -> if c1 || c2  then 0 else 1) cs1s cs2s
+        let isFs =
+            let ffss_scan = sgmScanInc (+) 0 As_flags ffss :> [n]i32
+            let i1plusi2 = map2 (+) i1s i2s :> [m]i32
+            let i1plusi2s_expanded = expandi32 shp i1plusi2 :> [n]i32
+            in map2 (+) i1plusi2s_expanded ffss_scan
+    
+        let indss = map5 (\ c1 c2 iT1 iT2 iF ->
+                            if c1 then iT1-1
+                            else if c2 then iT2-1
+                            else iF - 1
+                        ) cs1s cs2s isT1s isT2s isFs
+        
+        let As' = scatter (copy As) (map i64.i32 indss) As
+        in
+        (As', (i1s, i2s))
 }
 
+module RankSearchKReport = {
+    let humanReasoningBatchRankSearch [n] [m] (ks: [m]i32) (As: [n]f32)
+                                (shp : [m]i32) (II1 : [n]i64) : [m]f32 =
+        let (_, _, _, _, results) =
+            loop ((ks : [m]i32) , As, (shp : [m]i32), II1, results : [m]f32) = (ks, As, shp, II1, (replicate m f32.nan))
+            while (reduce (+) 0 shp) > 0 do
+                let ps  = map3 (\ i size result ->
+                                    if size > 0 then As[i-1]
+                                    else             result
+                                ) (scan (+) 0 shp) shp results
+                let ps_expanded = map (\i -> ps[i]) II1
+                let lth_per_elem = map2 (\ elem p -> i32.bool (elem < p)) As ps_expanded
+                let eq_per_elem = map2 (\ elem p -> i32.bool (elem == p)) As ps_expanded
+                let cnts_lth = reduce_by_index (replicate m 0) (+) 0 II1 lth_per_elem :> [m]i32
+                let cnts_eq = reduce_by_index (replicate m 0) (+) 0 II1 eq_per_elem :> [m]i32
+                let kinds = map3 (\ k cnt_lth cnt_eq ->
+                                    if k == -1                    then -1
+                                    else if k <= cnt_lth          then 0
+                                    else if k <= cnt_lth + cnt_eq then 1
+                                    else                               2
+                                ) ks cnts_lth cnts_eq
+                let ks' = map4 (\ kind k cnt_lth cnt_eq ->
+                                if kind == -1     then -1i32
+                                else if kind == 0 then k
+                                else if kind == 1 then -1i32
+                                else                   k - cnt_lth - cnt_eq
+                               ) kinds ks cnts_lth cnts_eq
+                let results' = map3 (\ kind p result ->
+                                        if kind == 1 then p
+                                        else              result
+                                    ) kinds ps results
+                let shp' = map3 (\ kind cnt_lth cnt_eq ->
+                                    if kind == -1     then 0
+                                    else if kind == 0 then cnt_lth
+                                    else if kind == 1 then 0
+                                    else                   cnt_eq
+                                ) kinds cnts_lth cnts_eq
+                let (_, _, As', II1') = filter (\ (lth, eq, _, i) ->
+                                                    let kind = kinds[i] in
+                                                    if kind == -1     then false
+                                                    else if kind == 0 then lth == 1
+                                                    else if kind == 1 then false
+                                                    else                   lth == 0 && eq == 0
+                                            ) (zip4 lth_per_elem eq_per_elem As II1)
+                                    |> unzip4
+                in (ks', As', shp', II1', results')
+        in results
+
+
+    let compilerThinkingBatchRankSearch [m] [n] (ks: [m]i32) (As: [n]f32) (shp : [m]i32) : [m]f32 =
+        let (_, _, _, result) =
+            loop (ks, As, shp, results) = (ks, As, shp, (replicate m f32.nan))
+            while (reduce (+) 0 shp) > 0 do
+                let ps =
+                    let offsets = scanex (+) 0 shp
+                    in map3 (\ offset i result ->
+                                if i>=0 then As[offset+i]
+                                else         result
+                            ) offsets (map (\ size -> size-1) shp) results
+                let (As_partioned, (cnts_lth, cnts_eq)) = Partition3.batchReport (<) (==) As shp ps
+                let ks' = map4 (\ k cnt_lth cnt_eq size ->
+                                    if k <= cnt_lth && size > 0
+                                    then k
+                                    else if k <= cnt_lth + cnt_eq || size == 0
+                                    then k
+                                    else k-cnt_lth-cnt_eq
+                                ) ks cnts_lth cnts_eq shp
+                let results' =  map5 (\ k (cnt_lth, cnt_eq) size p result -> 
+                                        if k <= cnt_lth && size > 0
+                                        then result
+                                        else if k <= cnt_lth + cnt_eq || size == 0
+                                        then p
+                                        else result
+                                    ) ks (zip cnts_lth cnts_eq) shp ps results
+                let shp' = map4 (\ k cnt_lth cnt_eq size -> 
+                                    if k <= cnt_lth && size > 0
+                                    then cnt_lth
+                                    else if k <= cnt_lth + cnt_eq || size == 0
+                                    then 0
+                                    else size - cnt_lth - cnt_eq
+                                ) ks cnts_lth cnts_eq shp
+                let As' =
+                    let n' = reduce (+) 0 shp' |> i64.i32
+                    let old_offsets_expanded =
+                        scanex (+) 0 shp
+                        |> expandi32 shp
+                        |> map i64.i32 :> [n']i64
+                    let new_offsets_expanded =
+                        scanex (+) 0 shp'
+                        |> expandi32 shp'
+                        |> map i64.i32 :> [n']i64
+                    let ks_expanded = expandi32 shp' ks |> map i64.i32 :> [n']i64
+                    let cnts_lth_expanded = expandi32 shp' cnts_lth |> map i64.i32 :> [n']i64
+                    let cnts_eq_expanded = expandi32 shp' cnts_eq |> map i64.i32 :> [n']i64
+                    in map4 (\ newi old_offset new_offset (k, cnt_lth, cnt_eq) ->
+                                let i = newi - new_offset in
+                                if k <= cnt_lth
+                                then
+                                    let oldi = old_offset + i
+                                    in As_partioned[oldi]
+                                else
+                                    let oldi = old_offset + i + cnt_lth + cnt_eq
+                                    in As_partioned[oldi]
+                            ) (iota n') old_offsets_expanded new_offsets_expanded
+                            (zip3 ks_expanded cnts_lth_expanded cnts_eq_expanded)
+                in (ks', As', shp', results')
+        in result
+
+}
 
 
 module RankSearchK = {
@@ -150,7 +298,7 @@ module RankSearchK = {
                 let ps_expanded = map (\i -> ps[i]) II1
                 let lth_eq_per_elem = map2 (\ elem p -> (if lth elem p then (1,0) else if eq elem p then (0,1) else (0,0))) A ps_expanded
                 let II1' = map i64.i32 II1
-            let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
+                let (cnt_lth, cnt_eq) = reduce_by_index (replicate m (0, 0)) (\ (a, b) (c, d) -> (a+c, b+d)) (0, 0) II1' lth_eq_per_elem |> unzip
                 let kinds = map3 (\ k lth eq->
                                     if k == -1            then -1
                                     else if k <= lth      then  0

@@ -653,7 +653,7 @@ let nestedLoopRankSearchSingleIteration (k, A, result) =
     let cnt_A_lth_p = reduce (+) 0 (map (\ e -> if e < p then 1 else 0)) A
     let cnt_A_eq_p = reduce (+) 0 (map (\ e -> if e == p then 1 else 0)) A
 
-    let kind = if length A > 0                       then -1 -- Was already done
+    let kind = if length A == 0                       then -1 -- Was already done
                else if k <= cnt_A_lth_p              then  0 -- Less than direction
                else if k <= cnt_A_lth_p + cnt_A_eq_p then  1 -- Done
                else                                        2 -- Greater than direction
@@ -702,7 +702,7 @@ let nestedLoopRankSearchBatch [m] (ks: [m]i64) (As: [m][]f32) : [m]f32 =
     let (_, _, results) =
         loop (ks, As, results) = (ks, As, (replicate m NAN))
         while (reduce (+) 0 (map length As)) > 0 do
-            -- FLAT
+            -- NOT FLAT
             let ps = map (\ A -> if length A > 0 then A[(length A) - 1] else NAN) As
             
             -- NOT FLAT

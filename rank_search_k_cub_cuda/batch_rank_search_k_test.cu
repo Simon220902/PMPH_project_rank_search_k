@@ -18,6 +18,11 @@ void randomInitShp(uint32_t* data, const uint32_t M, const uint32_t N) {
         data[r % M] += 1;
     }
 }
+void regularShape(uint32_t* data, const uint32_t M, const uint32_t N) {
+    for (int i = 0; i < M; i++) {
+        data[i] = N/M;
+    }
+}
 
 void randomInitKs(uint32_t* h_ks, uint32_t* h_shp, const uint32_t M) {
     for (int i = 0; i < M; i++) { // Set entries of k to be between zero and 2/3 length of that array.
@@ -43,7 +48,8 @@ double simpleBatchRankSearchK(uint32_t m, uint32_t n,
                               uint32_t* d_res){
     // Declare, allocate, and initialize device-accessible pointers
     // for sorting data
-    uint32_t  num_items = n;
+    // We round n down to the nearest multiple of m.
+    uint32_t  num_items = ((n+m-1)/m)*m;
     uint32_t  num_segments = m;
     uint32_t  *h_offsets = (uint32_t*) malloc(sizeof(uint32_t) * (m+1));
     // Setup offsets
@@ -159,7 +165,8 @@ int main (int argc, char * argv[]) {
     uint32_t* h_keys  = (uint32_t*) malloc(N*sizeof(uint32_t));
     randomInitNat(h_keys, N);
     uint32_t* h_shp   = (uint32_t*) malloc(M*sizeof(uint32_t));
-    randomInitShp(h_shp, M, N);
+    // randomInitShp(h_shp, M, N);
+    regularShape(h_shp, M, N);
     uint32_t* h_ks   = (uint32_t*) malloc(M*sizeof(uint32_t));
     randomInitKs(h_ks, h_shp, M);
 
